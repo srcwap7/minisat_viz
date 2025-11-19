@@ -1,0 +1,11 @@
+/home/x29/minisat/build/CMakeFiles/minisat-lib-static.dir
+/home/x29/minisat/build/CMakeFiles/minisat-lib-shared.dir
+/home/x29/minisat/build/CMakeFiles/minisat_core.dir
+/home/x29/minisat/build/CMakeFiles/minisat_simp.dir
+/home/x29/minisat/build/CMakeFiles/simple_visualizer.dir
+/home/x29/minisat/build/CMakeFiles/edit_cache.dir
+/home/x29/minisat/build/CMakeFiles/rebuild_cache.dir
+/home/x29/minisat/build/CMakeFiles/list_install_components.dir
+/home/x29/minisat/build/CMakeFiles/install.dir
+/home/x29/minisat/build/CMakeFiles/install/local.dir
+/home/x29/minisat/build/CMakeFiles/install/strip.dir

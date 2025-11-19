@@ -1,0 +1,1 @@
+/usr/bin/c++ -rdynamic -Wl,--dependency-file=CMakeFiles/simple_visualizer.dir/link.d CMakeFiles/simple_visualizer.dir/minisat/core/comparative_analysis.cc.o -o simple_visualizer  libminisat.a -lpython3.13 -lz -lpython3.13

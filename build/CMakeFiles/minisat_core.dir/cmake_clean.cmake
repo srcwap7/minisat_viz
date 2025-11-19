@@ -1,0 +1,12 @@
+file(REMOVE_RECURSE
+  "CMakeFiles/minisat_core.dir/link.d"
+  "CMakeFiles/minisat_core.dir/minisat/core/Main.cc.o"
+  "CMakeFiles/minisat_core.dir/minisat/core/Main.cc.o.d"
+  "minisat_core"
+  "minisat_core.pdb"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang CXX)
+  include(CMakeFiles/minisat_core.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()

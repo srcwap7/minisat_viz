@@ -1,0 +1,19 @@
+{
+  "cnf_files":[
+    {"path":"mf_cnfs/output_0.cnf","log_file":"log_output_0.cnf","result_file":"res_output_0.cnf"},
+    {"path":"mf_cnfs/output_1.cnf","log_file":"log_output_1.cnf","result_file":"res_output_1.cnf"}
+  ],
+  "output":{
+    "result_directory":"results",
+    "log_directory":"logs",
+    "graph_directory":"graph",
+    "graph_name":"final_graph"
+  },
+  "metrics":{
+    "nDecisions":true,
+    "nUnitProps":true,
+    "nConflicts":true
+  },
+  "refresh_rate":2,
+  "verbosity":true
+}

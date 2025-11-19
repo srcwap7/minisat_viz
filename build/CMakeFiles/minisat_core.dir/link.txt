@@ -1,0 +1,1 @@
+/usr/bin/c++ -rdynamic -Wl,--dependency-file=CMakeFiles/minisat_core.dir/link.d CMakeFiles/minisat_core.dir/minisat/core/Main.cc.o -o minisat_core  libminisat.a -lpython3.13 -lz -lpython3.13
