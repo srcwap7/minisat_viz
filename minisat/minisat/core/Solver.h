@@ -25,9 +25,11 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include "minisat/mtl/Heap.h"
 #include "minisat/mtl/Alg.h"
 #include "minisat/mtl/IntMap.h"
+#include <atomic>
 #include "minisat/utils/Options.h"
 #include "minisat/core/SolverTypes.h"
 #include <bits/stdc++.h>
+#include <semaphore.h>
 
 
 namespace Minisat {
@@ -61,7 +63,7 @@ public:
     bool    solve        (Lit p, Lit q, Lit r);     // Search for a model that respects three assumptions.
     bool    okay         () const;                  // FALSE means solver is in a conflicting state
     bool    implies      (const vec<Lit>& assumps, vec<Lit>& out);
-
+    std::string  name;
     // Iterate over clauses and top-level assignments:
     ClauseIterator clausesBegin() const;
     ClauseIterator clausesEnd()   const;
@@ -76,11 +78,18 @@ public:
     void    toDimacs     (const char* file, Lit p, Lit q);
     void    toDimacs     (const char* file, Lit p, Lit q, Lit r);
     void    toDimacsLearnt (const char* file);
-    std::vector<double> averageProportion;
     
-    vec<double> timestamps,decisionVector,unitPropsVector,conflictVector;
+    //for sat-viz
+    //TEMPLATE BEGIN MINISAT-VIZ DATA STRUCTURES
+    bool vizFlag;int waitingThreads;
+    sem_t   propagationDone,calculationDone;
+    vec<double> timestamps,decisionVector,unitPropsVector,conflictVector,clauseVariableRatioVector;
     vec<double> clauseDBVector,gcEventsVector,restartEventsVector,learntClausesVector;
+    vec<double> threadedTimestamp;
     double gcEvents;
+    VMap<bool> seenx;
+    std::mutex mtx;
+    //TEMPLATE END MINISAT-VIZ DATA STRUCTURES
 
     
     // Variable mode:
@@ -137,16 +146,12 @@ public:
     double    learntsize_adjust_inc;
     const char* learntClausesDumpFile;
     Lit       fetchFirstClauseLiterals(int idx);
-
-    // Statistics: (read-only member variable)
-    //
     uint64_t solves, starts, decisions, rnd_decisions, propagations, conflicts;
     uint64_t dec_vars, num_clauses, num_learnts, clauses_literals, learnts_literals, max_literals, tot_literals,curr_restarts;
+    void   get_clause_variable_ratio();
 
 protected:
 
-    // Helper structures:
-    //
     struct VarData { CRef reason; int level; };
     static inline VarData mkVarData(CRef cr, int l){ VarData d = {cr, l}; return d; }
 
@@ -176,8 +181,7 @@ protected:
         ShrinkStackElem(uint32_t _i, Lit _l) : i(_i), l(_l){}
     };
 
-    // Solver state:
-    //
+    
     vec<CRef>           clauses;          // List of problem clauses.
     vec<CRef>           learnts;          // List of learnt clauses.
     vec<Lit>            trail;            // Assignment stack; stores all assigments made in the order they were made.
@@ -194,10 +198,8 @@ protected:
 
     FILE *logFile;
     FILE *outputFile;
-    bool vizFlag;
 
     Heap<Var,VarOrderLt>order_heap;       // A priority queue of variables ordered with respect to the variable activity.
-
     bool                ok;               // If FALSE, the constraints are already unsatisfiable. No part of the solver state may be used!
     double              cla_inc;          // Amount to bump next clause with.
     double              var_inc;          // Amount to bump next variable with.

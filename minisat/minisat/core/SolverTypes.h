@@ -140,16 +140,10 @@ class Clause;
 typedef RegionAllocator<uint32_t>::Ref CRef;
 
 class Clause {
-    struct {
-        unsigned mark       : 2;
-        unsigned learnt     : 1;
-        unsigned has_extra  : 1;
-        unsigned reloced    : 1;
-        unsigned size       : 27; 
-        unsigned lbd        : 32;
-    } header;
+    //TEMPLATE BEGIN MINISAT_CLAUSE_DEFINITION
+    struct {unsigned mark:2;unsigned learnt:1;unsigned has_extra:1;unsigned reloced:1;unsigned size:27;} header;
+    //TEMPLATE END MINISAT_CLAUSE_DEFINITION
     union { Lit lit; float act; uint32_t abs; CRef rel; } data[0];
-
     friend class ClauseAllocator;
 
     Clause(const vec<Lit>& ps, bool use_extra, bool learnt) {
@@ -163,10 +157,8 @@ class Clause {
             data[i].lit = ps[i];
 
         if (header.has_extra){
-            if (header.learnt)
-                data[header.size].act = 0;
-            else
-                calcAbstraction();
+            if (header.learnt) data[header.size].act = 0;
+            else calcAbstraction();
         }
     }
 

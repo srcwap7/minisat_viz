@@ -28,14 +28,11 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include <thread>
 #include <chrono>
 #include <atomic>
-#include "matplotlibcpp.h"
 #include "semaphore.h"
 
 using namespace Minisat;
-namespace plt = matplotlibcpp;
 
 //=================================================================================================
-
 
 static Solver* solver;
 static void SIGINT_interrupt(int) { solver->interrupt(); }
@@ -103,8 +100,6 @@ int main(int argc, char** argv){
             printf("|                                                                             |\n"); 
         }
  
-        // Change to signal-handlers that will only notify the solver and allow it to terminate
-        // voluntarily:
         sigTerm(SIGINT_interrupt);
        
         if (!S.simplify()){
@@ -143,14 +138,7 @@ int main(int argc, char** argv){
                 fprintf(res, "INDET\n");
             fclose(res);
         }
-
-        
-        
-#ifdef NDEBUG
-        exit(ret == l_True ? 10 : ret == l_False ? 20 : 0);     // (faster than "return", which will invoke the destructor for 'Solver')
-#else
-        return (ret == l_True ? 10 : ret == l_False ? 20 : 0);
-#endif
+        exit(ret == l_True ? 10 : ret == l_False ? 20 : 0);
     } 
     catch (OutOfMemoryException&){
         printf("===============================================================================\n");

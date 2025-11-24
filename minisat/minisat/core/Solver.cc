@@ -24,9 +24,12 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include "minisat/mtl/Sort.h"
 #include "minisat/utils/System.h"
 #include "minisat/core/Solver.h"
+#include <semaphore.h>
+#include <chrono>
 
 using namespace Minisat;
 using namespace std;
+
 
 //=================================================================================================
 // Options:
@@ -93,18 +96,20 @@ Solver::Solver():
   , gcEvents           (0)
   , curr_restarts      (0)
 { 
-
+    sem_init(&propagationDone,false,0);
+    sem_init(&calculationDone,false,1);
+    waitingThreads = 0;
 }
 
 Solver::Solver(string& logFile,string& outputFile):Solver(){
     this->logFile = fopen(logFile.c_str(),"wb");
     if (!this->logFile){
-        cerr << "Error opening File " << endl;
+        cerr << "In Constructor Error opening log File " << endl;
         _exit(404);
     }
     this->outputFile = fopen(outputFile.c_str(),"wb");
     if (!this->outputFile){
-        cerr << "Error opening File " << endl;
+        cerr << "In Constructor Error opening outputFile " << endl;
         _exit(404);
     }
     this->vizFlag = true;
@@ -130,9 +135,8 @@ Var Solver::newVar(lbool upol, bool dvar){
     if (free_vars.size() > 0){
         v = free_vars.last();
         free_vars.pop();
-    }else
-        v = next_var++;
-
+    }
+    else v = next_var++;
     watches  .init(mkLit(v, false));
     watches  .init(mkLit(v, true ));
     assigns  .insert(v, l_Undef);
@@ -150,8 +154,7 @@ Var Solver::newVar(lbool upol, bool dvar){
 
 // Note: at the moment, only unassigned variable will be released (this is to avoid duplicate
 // releases of the same variable).
-void Solver::releaseVar(Lit l)
-{
+void Solver::releaseVar(Lit l){
     if (value(l) == l_Undef){
         addClause(l);
         released_vars.push(var(l));
@@ -191,8 +194,15 @@ void Solver::attachClause(CRef cr){
     assert(c.size() > 1);
     watches[~c[0]].push(Watcher(cr, c[1]));
     watches[~c[1]].push(Watcher(cr, c[0]));
-    if (c.learnt()) num_learnts++, learnts_literals += c.size();
-    else num_clauses++, clauses_literals += c.size();
+    if (c.learnt()) {
+        num_learnts++, learnts_literals += c.size();
+        //TEMPLATE BEGIN LEARNT CLAUSE STATISTICES ATTACH
+    }
+    else {
+        num_clauses++, clauses_literals += c.size();
+        //TEMPLATE BEGIN ORIGINAL CLAUSE STATISTICS ATTACH
+    }
+    //TEMPLATE BEGIN GENERAL CLAUSE STATISTICS ATTACH
 }
 
 
@@ -207,8 +217,15 @@ void Solver::detachClause(CRef cr, bool strict){
         watches.smudge(~c[1]);
     }
 
-    if (c.learnt()) num_learnts--, learnts_literals -= c.size();
-    else            num_clauses--, clauses_literals -= c.size();
+    if (c.learnt()) {
+        num_learnts--, learnts_literals -= c.size();
+        //TEMPLATE BEGIN LEARNT CLAUSE STATISTICS DETACH
+    }
+    else {
+        num_clauses--, clauses_literals -= c.size();
+        //TEMPLATE END ORIGINAL CLAUSE STATISTICS DETACH
+    }
+    //TEMPLATE GENERAL CLAUSE STATISTICS DETACH
 }
 
 
@@ -241,6 +258,47 @@ void Solver::cancelUntil(int level) {
         trail.shrink(trail.size() - trail_lim[level]);
         trail_lim.shrink(trail_lim.size() - level);
     } 
+}
+
+void Solver::get_clause_variable_ratio(){
+    mtx.lock();
+        waitingThreads++;
+    mtx.unlock();
+    sem_wait(&propagationDone);
+    long vars = 0,clause = 0;
+    for (int i = 0;i < nVars();i++) seenx[i]=0;
+    for (int i = 0; i < clauses.size();i++){
+        const Clause& c = ca[clauses[i]];
+        vec<Var> curr_clause;
+        bool flag = false;
+        for (int j = 0;j < c.size();j++){
+            Var v = var(c[j]);
+            if (assigns[v] == l_Undef){
+                if (!seenx[v]) {
+                    curr_clause.push(v);
+                    seenx[v]=1;
+                    vars++;
+                }
+            }
+            if (value(c[j]) == l_True){
+                flag = true;
+                break;
+            }
+        }
+        if (flag){
+            for (int i = 0;i < curr_clause.size();i++) {
+                seenx[curr_clause[i]] = 0;
+                vars--;
+            }
+        }
+        else clause++;
+    }
+    (threadedTimestamp.size()==0)?threadedTimestamp.push(1):threadedTimestamp.push(threadedTimestamp.last()+1);
+    clauseVariableRatioVector.push((double)clause/vars);
+    sem_post(&calculationDone);
+    mtx.lock();
+        waitingThreads--;
+    mtx.unlock();
 }
 
 
@@ -406,7 +464,6 @@ bool Solver::litRedundant(Lit p){
             stack.pop();
         }
     }
-
     return true;
 }
 
@@ -426,8 +483,7 @@ void Solver::analyzeFinal(Lit p, LSet& out_conflict){
     out_conflict.clear();
     out_conflict.insert(p);
 
-    if (decisionLevel() == 0)
-        return;
+    if (decisionLevel() == 0) return;
 
     seen[var(p)] = 1;
 
@@ -476,11 +532,10 @@ CRef Solver::propagate(){
     int     num_props = 0;
 
     while (qhead < trail.size()){
-        Lit            p   = trail[qhead++];     // 'p' is enqueued fact to propagate.
+        Lit            p   = trail[qhead++];    
         vec<Watcher>&  ws  = watches.lookup(p);
         Watcher        *i, *j, *end;
         num_props++;
-
         for (i = j = (Watcher*)ws, end = i + ws.size(); i != end;){
             Lit blocker = i->blocker;
             if (value(blocker) == l_True){
@@ -520,7 +575,6 @@ CRef Solver::propagate(){
     }
     propagations += num_props;
     simpDB_props -= num_props;
-
     return confl;
 }
 
@@ -658,10 +712,11 @@ lbool Solver::search(int nof_conflicts){
     starts++;
 
     for (;;){
+        if (vizFlag && waitingThreads) sem_wait(&calculationDone);
         CRef confl = propagate();
+        if (vizFlag) sem_post(&propagationDone);
         if (confl != CRef_Undef){
-            // CONFLICT
-            conflicts++; 
+            conflicts++; conflictC++;
             if (decisionLevel() == 0) return l_False;
             learnt_clause.clear();
             analyze(confl, learnt_clause, backtrack_level);
@@ -680,7 +735,6 @@ lbool Solver::search(int nof_conflicts){
                 learntsize_adjust_confl *= learntsize_adjust_inc;
                 learntsize_adjust_cnt    = (int)learntsize_adjust_confl;
                 max_learnts             *= learntsize_inc;
-
                 if (verbosity >= 1){
                     if (!vizFlag){
                         printf("| %9d | %7d %8d %8d | %8d %8d %6.0f | %6.3f %% |\n", 
@@ -742,13 +796,11 @@ lbool Solver::search(int nof_conflicts){
 double Solver::progressEstimate() const{
     double  progress = 0;
     double  F = 1.0 / nVars();
-
     for (int i = 0; i <= decisionLevel(); i++){
         int beg = i == 0 ? 0 : trail_lim[i - 1];
         int end = i == decisionLevel() ? trail.size() : trail_lim[i];
         progress += pow(F, i) * (end - beg);
     }
-
     return progress / nVars();
 }
 
@@ -760,9 +812,7 @@ double Solver::progressEstimate() const{
   2: 1 1 2 1 1 2 4
   3: 1 1 2 1 1 2 4 1 1 2 1 1 2 4 8
   ...
-
-
- */
+*/
 
 static double luby(double y, int x){
 
@@ -809,7 +859,7 @@ lbool Solver::solve_(){
         }
     }
 
-    // Search
+    if (vizFlag) {for (int i = 0; i < nVars();i++) seenx.insert(i,false);}
     while (status == l_Undef){
         double rest_base = luby_restart ? luby(restart_inc, curr_restarts) : pow(restart_inc, curr_restarts);
         status = search(rest_base * restart_first);
@@ -819,8 +869,10 @@ lbool Solver::solve_(){
 
     if (verbosity >= 1){
         if (!vizFlag) printf("===============================================================================\n");
-        else fprintf(logFile,"===============================================================================\n");
-        fflush(logFile);
+        else {
+            fprintf(logFile,"===============================================================================\n");
+            fflush(logFile);
+        }
     }
 
 

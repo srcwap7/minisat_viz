@@ -38,15 +38,13 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 using json = nlohmann::json;
 using namespace Minisat;
 using namespace std;
-
 namespace plt = matplotlibcpp;
 
 //=================================================================================================
 
-
 static Solver* solver;
-// Terminate by notifying the solver and back out gracefully. This is mainly to have a test-case
-// for this feature of the Solver as it may take longer than an immediate call to '_exit()'.
+
+using dataAccessorFunction = const vec<double>& (*)(const Solver* S);
 static void SIGINT_interrupt(int) { solver->interrupt(); }
 
 static void SIGINT_exit(int) {
@@ -65,95 +63,6 @@ std::vector<Solver*> solvers;
 sem_t pauseSem;
 
 
-/*void analyzeAverageProportions(){
-    while (!stopFlag){
-        plt::clf();
-        for (int i = 0; i < solvers.size(); i++){
-            if (!solvers[i]->solved){
-                solvers[i]->averageProportion.push_back((double)solvers[i]->sumPercentage/solvers[i]->globalLearnts);
-                if (solvers[i]->timestamps.empty()) solvers[i]->timestamps.push_back(1);
-                else solvers[i]->timestamps.push_back((solvers[i]->timestamps).back()+1);
-            }
-            const std::map<std::string,std::string> opts = {{"label",solvers[i]->name}};
-            plt::plot(solvers[i]->timestamps,solvers[i]->averageProportion,opts);
-            plt::legend({{"loc", "upper left"}});
-        }
-        plt::title(" Graph For comparison ");
-        plt::pause(0.01);
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-    }
-    plt::clf();
-    for (int i = 0; i < solvers.size();i++) plt::plot(solvers[i]->timestamps,solvers[i]->averageProportion);
-    plt::title("comparative_graph");
-    plt::save("final_graph");
-    plt::close;
-    sem_post(&pauseSem1);
-}
-
-void doPLotting(){
-    plt::figure_size(1200, 800);
-    while (!stopFlag){
-        plt::clf();
-        // ----- SUBPLOT 1 -----
-        plt::subplot(1,2,1);
-        for (int i = 0; i < solvers.size(); i++){
-            if (!solvers[i]->solved){
-                if (solvers[i]->timestamps.empty()) solvers[i]->timestamps.push_back(1);
-                else solvers[i]->timestamps.push_back(solvers[i]->timestamps.back() + 1);
-                solvers[i]->unitProps.push_back(solvers[i]->unitPropagations);
-                solvers[i]->averageProportion.push_back((double)solvers[i]->sumPercentage / solvers[i]->globalLearnts);
-            }
-            const std::map<std::string,std::string> opts = {{"label", solvers[i]->name}};
-            plt::plot(solvers[i]->timestamps, solvers[i]->unitProps, opts);
-        }
-        plt::legend({{"loc", "upper left"}});
-
-        // ----- SUBPLOT 2 -----
-        plt::subplot(1,2,2);
-        for (int i = 0; i < solvers.size(); i++){
-            const std::map<std::string,std::string> opts = {{"label", solvers[i]->name}};
-            plt::plot(solvers[i]->timestamps, solvers[i]->averageProportion, opts);
-        }
-        plt::legend({{"loc", "upper left"}});
-        plt::pause(0.01);
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-    }
-    plt::clf();
-    plt::subplot(1,2,1);
-    for (auto &s : solvers) plt::plot(s->timestamps, s->unitProps);
-    plt::subplot(1,2,2);
-    for (auto &s : solvers) plt::plot(s->timestamps, s->averageProportion);
-    plt::save("final_graph");
-    plt::close();
-    sem_post(&pauseSem);
-}
-
-
-void analyzeUnitProps(){
-    while (!stopFlag){
-        plt::clf();
-        for (int i = 0; i < solvers.size(); i++){
-            if (!solvers[i]->solved){
-                solvers[i]->unitProps.push_back(solvers[i]->unitPropagations);
-                if (solvers[i]->timestamps.empty()) solvers[i]->timestamps.push_back(1);
-                else solvers[i]->timestamps.push_back((solvers[i]->timestamps).back()+1);
-            }
-            const std::map<std::string,std::string> opts = {{"label",solvers[i]->name}};
-            plt::plot(solvers[i]->timestamps,solvers[i]->unitProps,opts);
-            plt::legend({{"loc", "upper left"}});
-        }
-        plt::title(" Graph For comparison ");
-        plt::pause(0.01);
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-    }
-    plt::clf();
-    for (int i = 0; i < solvers.size();i++) plt::plot(solvers[i]->timestamps,solvers[i]->unitProps);
-    plt::title("comparative_graph");
-    plt::save("final_graph");
-    plt::close;
-    sem_post(&pauseSem);
-}*/
-
 struct bounded_metrics{
     std::string metricName;
     bool bounded;
@@ -161,10 +70,10 @@ struct bounded_metrics{
 };
 
 typedef struct bounded_metrics bounded_metric;
-struct metrics{bool flags[11];};
-vector<string> options = {"nDecisions","nUnitProps","nConflicts","clauseDatabaseSize","gcEvents","learnt_clause_count","restartEvents","avg_lbd","backjumpDistance","conflictDecisionLevel","avgTopKActivity"};
+struct metrics{bool flags[13];};
+vector<string> options = {"nDecisions","nUnitProps","nConflicts","clauseDatabaseSize","gcEvents","learnt_clause_count","restartEvents","clause_variable_ratio","avg_lbd","backjumpDistance","conflictDecisionLevel","avgTopKActivity","clauseVariableRatioVector"};
 struct metrics metric;
-uint32_t active_metrics;
+volatile int active_metrics = 0;
 
 bool createIfNotExists(string& dir){
     if (filesystem::exists(dir)){
@@ -188,15 +97,69 @@ void parseMetrics(json& configMetrics,bool& flag,string& option_name){
     else flag = false;
 }
 
+class ThreadPool {
+public:
+    using Task = Solver*;  
+    ThreadPool(size_t threadCount) : stop(false) {
+        workers.reserve(threadCount);
+        for (size_t i = 0; i < threadCount; i++) {
+            workers.emplace_back([this]() { workerLoop(); });
+        }
+    }
+
+    ~ThreadPool() {
+        stop.store(true);
+        cv.notify_all();
+        for (auto &t : workers) t.join();
+    }
+
+    void pushTask(Task s) {
+        {
+            std::lock_guard<std::mutex> lk(mtx);
+            tasks.push(s);
+        }
+        cv.notify_one();
+    }
+
+private:
+    vector<thread> workers;
+    queue<Task> tasks;
+    mutex mtx;
+    condition_variable cv;
+    atomic<bool> stop;
+    void workerLoop() {
+        while (!stop.load()) {
+            Task job = nullptr;
+            int idx;
+            {
+                std::unique_lock<std::mutex> lk(mtx);
+                cv.wait(lk, [&]() {
+                    return stop.load() || !tasks.empty();
+                });
+
+                if (stop.load()) return;
+                job = tasks.front();
+                tasks.pop();
+            }
+            if (job) {
+                job->get_clause_variable_ratio();
+            }
+        }
+    }
+};
+
+ThreadPool pool(5);
+
 //easy statistics minisat already tracks them
 inline void updateTimestamp(Solver* S){(!S->timestamps.size()) ? S->timestamps.push(1) : S->timestamps.push((S->timestamps).last()+1);}
 inline void updateDecisions(Solver* S){if (metric.flags[0]) S->decisionVector.push(S->decisions);}
 inline void updateUnitProps(Solver* S){if (metric.flags[1]) S->unitPropsVector.push(S->propagations);}
 inline void updateConflictsCount(Solver* S){if (metric.flags[2]) S->conflictVector.push(S->conflicts);}
-inline void updateClauseDBSize(Solver* S){if (metric.flags[3]) S->clauseDBVector.push(S->num_clauses + S->num_learnts);}
+inline void updateClauseDBSize(Solver* S){if (metric.flags[3]) S->clauseDBVector.push(((double)S->num_clauses) + ((double)S->num_learnts));}
 inline void updateGCEvents(Solver* S){if (metric.flags[4]) S->gcEventsVector.push(S->gcEvents);}
 inline void updateLearntClauses(Solver* S){if (metric.flags[5]) S->learntClausesVector.push(S->num_learnts);}
 inline void updateRestartEvents(Solver* S){if (metric.flags[6]) S->restartEventsVector.push(S->curr_restarts);}
+inline void updateClauseVariableRatio(Solver* S){if (metric.flags[7]) {pool.pushTask(S);}}
 
 //data accessors for different stats
 inline const vec<double>& getDecisionVector(const Solver* S)    {return S->decisionVector;}
@@ -206,56 +169,72 @@ inline const vec<double>& getClauseDBVector(const Solver* S)    {return S->claus
 inline const vec<double>& getGCEventsVector(const Solver* S)    {return S->gcEventsVector;}
 inline const vec<double>& getLearntClauseVector(const Solver* S){return S->learntClausesVector;}
 inline const vec<double>& getRestartEventVector(const Solver* S){return S->restartEventsVector;}
+inline const vec<double>& getClauseVariableRatioVector(const Solver* S){return S->clauseVariableRatioVector;}
+
+const vector<dataAccessorFunction> dataAccessor = {getDecisionVector,getUnitPropVector,getConflictVector,getClauseDBVector,getGCEventsVector,getLearntClauseVector,getRestartEventVector,getClauseVariableRatioVector};
 
 
-//generalized vector for all functions
-using dataAccessorFunction = const vec<double>& (*)(const Solver* S);
-const vector<dataAccessorFunction> dataAccessor = {getDecisionVector,getUnitPropVector,getConflictVector,getClauseDBVector,getGCEventsVector,getLearntClauseVector,getRestartEventVector};
-
-//custom statistics
 void plotMetrics(string path){
     int cols = ceil(sqrt(active_metrics));
     int rows = ceil((double)active_metrics/cols);
-    plt::figure_size(1200,800);
+    plt::figure_size(1300,900);
+    bool flag = false;
     while (!stopFlag){
-        int idx = 1;
-        plt::clf();
-        for (int i = 0; i < solvers.size();i++){
-            if (!solvers[i]->solved){
-                updateTimestamp(solvers[i]);
-                updateDecisions(solvers[i]);
-                updateUnitProps(solvers[i]);
-                updateConflictsCount(solvers[i]);
-                updateGCEvents(solvers[i]);
-                updateLearntClauses(solvers[i]);
-                updateRestartEvents(solvers[i]);
+        try{
+            int idx = 1;
+            if (flag) plt::clf();
+
+            for (int i = 0; i < solvers.size();i++){
+                if (!solvers[i]->solved){
+                    updateTimestamp(solvers[i]);
+                    updateDecisions(solvers[i]);
+                    updateUnitProps(solvers[i]);
+                    updateConflictsCount(solvers[i]);
+                    updateClauseDBSize(solvers[i]);
+                    updateGCEvents(solvers[i]);
+                    updateLearntClauses(solvers[i]);
+                    updateRestartEvents(solvers[i]);
+                    updateClauseVariableRatio(solvers[i]);
+                }
             }
-        }
-        for (int metric_no = 0; metric_no < 7; metric_no++){
-            if (metric.flags[metric_no]){
-                plt::subplot(rows,cols,idx++);
-                plt::title(options[metric_no]);
-                for (int i = 0; i < solvers.size();i++) plt::plot(solvers[i]->timestamps,dataAccessor[metric_no](solvers[i]));
-                plt::legend({{"loc", "upper left"}});
+            for (int metric_no = 0; metric_no < 8; metric_no++){
+                if (metric.flags[metric_no]){
+                    plt::subplot(rows, cols, idx++);
+                    plt::title(options[metric_no]);
+                    for (int i = 0; i < solvers.size(); i++) {
+                        if (solvers[i]->timestamps.size() == dataAccessor[metric_no](solvers[i]).size()) plt::plot(solvers[i]->timestamps,dataAccessor[metric_no](solvers[i]));
+                        else plt::plot(solvers[i]->threadedTimestamp,dataAccessor[metric_no](solvers[i]));
+                    }
+                    plt::legend({{"loc", "upper left"}});
+                }
             }
+            plt::tight_layout();
+            plt::subplots_adjust({{"top", 0.93}});
+            plt::suptitle("SAT Metrics Visualizer");
+            plt::pause(0.01);
+            flag = true;
+            std::this_thread::sleep_for(std::chrono::seconds(2));
         }
-        plt::suptitle("SAT Metrics Visualizer");
-        plt::pause(0.01);
-        this_thread::sleep_for(std::chrono::seconds(2));
+        catch(const exception& e){
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            cout << e.what() << endl;
+        }
     }
     plt::clf();
-    int idx = 1;
+    int idx2 = 1;
     for (int metric_no = 0; metric_no < 7; metric_no++){
         if (metric.flags[metric_no]){
-            plt::subplot(rows,cols,idx++);
+            plt::subplot(rows, cols, idx2++);
             plt::title(options[metric_no]);
-            for (int i = 0; i < solvers.size();i++) plt::plot(solvers[i]->timestamps,dataAccessor[metric_no](solvers[i]));
+            for (int i = 0; i < solvers.size(); i++) plt::plot(solvers[i]->timestamps,dataAccessor[metric_no](solvers[i]));
             plt::legend({{"loc", "upper left"}});
         }
     }
-    plt::title("Metric Comparison Graph");
+    plt::tight_layout();
+    plt::subplots_adjust({{"top", 0.93}});
+    plt::suptitle("Metric Comparison Graph");
     plt::save(path);
-    plt::close;
+    plt::close();
     sem_post(&pauseSem);
 }
 
@@ -312,7 +291,7 @@ int main(int argc, char** argv){
         };
 
         if (!file.is_open()){
-            cerr << " Error opening File " << std::endl;
+            cerr << " Error opening File " << endl;
             _exit(404);
         }
 
@@ -340,8 +319,9 @@ int main(int argc, char** argv){
             threads.emplace_back(solverFunction,S); 
         }
 
-        std::string full_path = graphDirectory + graphFile;
-        std::thread t1(plotMetrics,full_path);
+        cout << active_metrics << endl;
+        string full_path = graphDirectory + graphFile;
+        thread t1(plotMetrics,full_path);
 
         signal(SIGINT,[](int sig){
             stopFlag = true;

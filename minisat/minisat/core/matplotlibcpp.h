@@ -10,7 +10,7 @@
 #include <iostream>
 #include <cstdint> 
 #include <functional>
-#include <string> // std::stod
+#include <string>
 
 #ifndef WITHOUT_NUMPY
 #  define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
@@ -18,17 +18,14 @@
 
 #  ifdef WITH_OPENCV
 #    include <opencv2/opencv.hpp>
-#  endif // WITH_OPENCV
+#  endif 
 
-/*
- * A bunch of constants were removed in OpenCV 4 in favour of enum classes, so
- * define the ones we need here.
- */
+
 #  if CV_MAJOR_VERSION > 3
 #    define CV_BGR2RGB cv::COLOR_BGR2RGB
 #    define CV_BGRA2RGBA cv::COLOR_BGRA2RGBA
 #  endif
-#endif // WITHOUT_NUMPY
+#endif 
 
 #if PY_MAJOR_VERSION >= 3
 #  define PyString_FromString PyUnicode_FromString
@@ -355,8 +352,7 @@ static_assert(sizeof(unsigned long long) == 8);
 template <> struct select_npy_type<unsigned long long> { const static NPY_TYPES type = NPY_UINT64; };
 
 template<typename Numeric>
-PyObject* get_array(const std::vector<Numeric>& v)
-{
+PyObject* get_array(const std::vector<Numeric>& v){
     npy_intp vsize = v.size();
     NPY_TYPES type = select_npy_type<Numeric>::type;
     if (type == NPY_NOTYPE) {
@@ -373,6 +369,7 @@ PyObject* get_array(const std::vector<Numeric>& v)
     return varray;
 }
 
+//overloading the get_array method to provide support for plotting minisat-style vectors
 template<typename Numeric>
 PyObject* get_array(const Minisat::vec<Numeric>& v){
     npy_intp vsize = v.size();
@@ -1400,6 +1397,7 @@ bool plot(const std::vector<NumericX>& x, const std::vector<NumericY>& y, const 
 template<typename NumericX, typename NumericY>
 bool plot(const Minisat::vec<NumericX>& x, const Minisat::vec<NumericY>& y, const std::string& s = "")
 {
+    if (!x.size() || !y.size()) return false;
     assert(x.size() == y.size());
 
     detail::_interpreter::get();
@@ -2912,6 +2910,7 @@ inline bool plot(const std::vector<double>& x, const std::vector<double>& y, con
 inline bool plot(const Minisat::vec<double>& x,const Minisat::vec<double>& y,const std::string& format = ""){
     return plot<double,double>(x,y,format);
 }
+
 
 inline bool plot(const std::vector<double>& y, const std::string& format = "") {
     return plot<double>(y,format);
